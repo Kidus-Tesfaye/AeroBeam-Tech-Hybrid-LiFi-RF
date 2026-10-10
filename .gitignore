@@ -6,3 +6,7 @@ __pycache__/
 # ---- PlatformIO (firmware/) ----
 # Covered by firmware/.gitignore, which PlatformIO generates and keeps.
 # Git reads a .gitignore in every folder, and its rules apply inside that folder.
+
+# ---- Wi-Fi password (firmware) ----
+# Each PC keeps its own copy, made from firmware/include/wifi_credentials.example.h
+firmware/include/wifi_credentials.h
