@@ -4,6 +4,14 @@
 #include <WiFi.h>
 #include "audio_packet.h"
 
+// Wi-Fi name and password live in include/wifi_credentials.h, which git ignores
+// so the password never reaches GitHub.
+#if __has_include("wifi_credentials.h")
+#include "wifi_credentials.h"
+#else
+#error "Copy include/wifi_credentials.example.h to include/wifi_credentials.h and fill in your Wi-Fi name and password"
+#endif
+
 Servo panServo;
 Servo tiltServo;
 
@@ -72,6 +80,14 @@ void setup()
 
   // --- INITIALIZE ESP-NOW (Wi-Fi) ---
   WiFi.mode(WIFI_STA);
+  // The receiver joins the LAN to take link commands from the host, which locks its
+  // radio to the router's channel. ESP-NOW only reaches it on that channel, so the
+  // sender joins the same network: its radio then follows the router's channel.
+  // The connection finishes in the background; peerInfo.channel = 0 below means
+  // "send on whatever channel the radio is on", so ESP-NOW follows it.
+  WiFi.setSleep(false);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
   if (esp_now_init() != ESP_OK)
   {
     Serial.println("Error initializing ESP-NOW");
@@ -92,6 +108,14 @@ void setup()
 
 void loop()
 {
+  // Report once when Wi-Fi joins, so the serial monitor shows the ESP-NOW channel
+  static bool wifiReported = false;
+  if (!wifiReported && WiFi.status() == WL_CONNECTED)
+  {
+    wifiReported = true;
+    Serial.printf("Wi-Fi joined, ESP-NOW on channel %ld\n", (long)WiFi.channel());
+  }
+
   // --- 1. NON-BLOCKING SERVO TRACKING SERIAL PARSER ---
   while (Serial.available() > 0)
   {
