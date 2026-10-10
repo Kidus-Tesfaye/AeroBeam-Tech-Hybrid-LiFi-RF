@@ -12,11 +12,11 @@
 
 Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-// --- 2. HARDWARE PIN ASSIGNMENTS ---
+// --- 2. HARDWARE PIN ASSIGNMENTS ---[cite: 1]
 const int OPTICAL_SENSE_PIN = 34; // Tapped directly from Solar Panel Positive (+) line
-const int DAC_AUDIO_OUT     = 25; // Internal DAC1 connected to Volume Potentiometer Pin 1
+const int DAC_AUDIO_OUT     = 25; // Internal DAC1 connected to Volume Potentiometer Pin 1[cite: 1, 7]
 
-// --- 3. ESP-NOW DATA STRUCTURE ---
+// --- 3. ESP-NOW DATA STRUCTURE ---[cite: 1, 7]
 typedef struct struct_audio_packet {
   uint16_t sampleBuffer[128];
   uint16_t bufferSize;
@@ -26,27 +26,31 @@ struct_audio_packet incomingAudio;
 bool isLaserActive = true;
 float signalVoltage = 0.0;
 
-// --- 4. ESP-NOW RECEIVE CALLBACK FUNCTION ---
+// --- 4. ESP-NOW RECEIVE CALLBACK FUNCTION (Cross-Version Compatible) ---
+#if defined(ESP_IDF_VERSION_MAJOR) && ESP_IDF_VERSION_MAJOR >= 4
 void OnDataRecv(const esp_now_recv_info *info, const uint8_t *incomingDataBytes, int len) {
+#else
+void OnDataRecv(const uint8_t *mac_addr, const uint8_t *incomingDataBytes, int len) {
+#endif
   memcpy(&incomingAudio, incomingDataBytes, sizeof(incomingAudio));
 
-  // Output digital audio to DAC (GPIO 25) ONLY when the optical beam is blocked
+  // Output digital audio to DAC (GPIO 25) ONLY when the optical beam is blocked[cite: 1, 7]
   if (!isLaserActive) {
     for (int i = 0; i < incomingAudio.bufferSize; i++) {
       uint8_t dacValue = incomingAudio.sampleBuffer[i] >> 4; 
-      dacWrite(DAC_AUDIO_OUT, dacValue); // Output audio on GPIO 25
+      dacWrite(DAC_AUDIO_OUT, dacValue); // Output audio on GPIO 25[cite: 1, 7]
       delayMicroseconds(125); // ~8 kHz audio playback rate
     }
   }
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);[cite: 1, 2]
 
   // Initialize I2C bus on GPIO 21 (SDA) and GPIO 22 (SCL)
   Wire.begin(21, 22);
   
-  // Initialize SH1106 Display
+  // Initialize SH1106 Display[cite: 1]
   delay(100); // Power-on stabilization delay for OLED controller[cite: 1]
   display.begin(i2c_Address, true);
   
@@ -60,7 +64,7 @@ void setup() {
   // Register ESP-NOW receive callback[cite: 1, 7]
   esp_now_register_recv_cb(OnDataRecv);
 
-  // Startup Screen HUD
+  // Startup Screen HUD[cite: 1]
   display.clearDisplay();
   display.setTextColor(SH110X_WHITE);
   display.setTextSize(1);
@@ -79,7 +83,7 @@ void loop() {
   // Link Threshold: Voltage > 0.3V indicates laser beam alignment[cite: 1, 7]
   isLaserActive = (signalVoltage > 0.3);
 
-  // --- UPDATE OLED HUD DISPLAY ---
+  // --- UPDATE OLED HUD DISPLAY ---[cite: 1]
   display.clearDisplay();
   
   display.setTextSize(1);
