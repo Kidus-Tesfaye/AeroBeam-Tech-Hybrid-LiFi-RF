@@ -1,1 +1,8 @@
-.venv
+# ---- Python (tracker) ----
+.venv/
+__pycache__/
+*.py[cod]
+
+# ---- PlatformIO (firmware/) ----
+# Covered by firmware/.gitignore, which PlatformIO generates and keeps.
+# Git reads a .gitignore in every folder, and its rules apply inside that folder.
