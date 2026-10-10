@@ -2,19 +2,33 @@ import cv2
 import math
 import serial
 import socket
+import sys
 import time
 
 # --- 1. SETUP SERIAL COMMUNICATION TO SENDER ESP32 ---
-SERIAL_PORT = 'COM4'  # Update with your active port ('COMx' or '/dev/ttyUSB0')
+SERIAL_PORT = 'COM3'  # Update with your active port ('COMx' or '/dev/ttyUSB0')
 BAUD_RATE = 115200
 
+# pip's "serial" package is an unrelated library that also imports as `serial`.
+# Only pySerial has serial.Serial, and without it the servos never get a command.
+if not hasattr(serial, "Serial"):
+    sys.exit("The installed 'serial' package is not pySerial, so the servos can't be driven.\n"
+             "Fix the venv:  pip uninstall -y serial  then  pip install -r requirements.txt")
+
+from serial.tools import list_ports
+
+# No servo link means no tracking, so stop here instead of running a HUD that only looks healthy
 try:
     esp32 = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.01)
-    time.sleep(2)  # Wait for serial bridge initialization
-    print(f"Connected to Sender ESP32 on {SERIAL_PORT}")
-except Exception as e:
-    print(f"Serial port connection error: {e}")
-    esp32 = None
+except serial.SerialException as e:
+    ports = "\n".join(f"  {p.device}: {p.description}" for p in list_ports.comports())
+    sys.exit(f"Can't open {SERIAL_PORT}: {e}\n"
+             f"Serial ports on this PC:\n{ports or '  (none - is the sender ESP32 plugged in?)'}\n"
+             "Set SERIAL_PORT to the sender's port (an ESP32 shows up as CP210x or CH340),\n"
+             "and close any serial monitor that has it open.")
+time.sleep(2)  # Opening the port can reboot the ESP32; let it finish booting
+print(f"Connected to Sender ESP32 on {SERIAL_PORT}")
+sender_rx = b""  # Partial line from the sender, waiting for its newline
 
 # --- 2. UDP LINK COMMANDS TO RECEIVER ESP32 ---
 # The receiver has no beam sensor: this script decides from the camera whether the
@@ -41,32 +55,42 @@ pan_angle = 90.0
 tilt_angle = 90.0
 
 # --- TUNED PARAMETERS TO PREVENT OVERSHOOTING & JITTER ---
-Kp_pan = 0.015   # Low proportional gain stops motors from swinging past target
-Kp_tilt = 0.015  # Low proportional gain stops motors from swinging past target
+Kp_pan = 0.007   # Low proportional gain stops motors from swinging past target
+Kp_tilt = 0.008  # Low proportional gain stops motors from swinging past target
 DEADBAND = 12    # Pixel tolerance window stops motor jitter at center
 
-# --- BEAM ALIGNMENT BOUNDARY (replaces the solar-panel voltage sensing) ---
-# Offset = pixel distance from the crosshair to the marker centre. Beyond BEAM_LOST_PX
-# the laser spot is taken to be off the panel and the receiver switches to ESP-NOW.
-# It only switches back to LiFi once the offset has stayed inside BEAM_RELOCK_PX for
-# RELOCK_HOLD_S, so the link doesn't flicker when the target sits near the edge.
-# Calibrate both by hand: nudge the gimbal until the panel loses the beam, note the offset.
-BEAM_LOST_PX = 40      # Must stay above DEADBAND, or the tracker's resting error trips it
-BEAM_RELOCK_PX = 25
-RELOCK_HOLD_S = 0.3
+# --- LIFI / RF LINK RULE (replaces the solar-panel voltage sensing) ---
+# LiFi whenever the target marker is anywhere in the frame, centred or not.
+# RF only once the camera has lost the marker completely for LOST_GRACE_S. The grace
+# period rides out single frames where detection blinks (motion blur, glare), so the
+# receiver doesn't chop between links. Set it to 0 to fall back on the first missed frame.
+LOST_GRACE_S = 0.3
 HEARTBEAT_S = 0.1      # Resend the mode this often; the receiver fails over after 1 s of silence
 
-link_mode = 'R'        # 'L' = LiFi (laser), 'R' = RF (ESP-NOW). Start on RF until aligned.
-inside_since = None    # When the offset last came inside BEAM_RELOCK_PX
+link_mode = 'R'        # 'L' = LiFi (laser), 'R' = RF (ESP-NOW). Start on RF until the target is seen.
+last_seen = None       # time.monotonic() of the last frame that contained the target
 last_link_send = 0.0
 
 
 def send_servo_angles(p, t):
     """Formats and transmits P<pan>T<tilt> command string over serial to ESP32.
     The firmware takes angles in tenths of a degree (P900T900 = 90.0 deg each)."""
-    if esp32 and esp32.is_open:
-        cmd = f"P{round(p * 10)}T{round(t * 10)}\n"
-        esp32.write(cmd.encode('utf-8'))
+    cmd = f"P{round(p * 10)}T{round(t * 10)}\n"
+    esp32.write(cmd.encode('utf-8'))
+
+
+def print_sender_output():
+    """Echoes whatever the sender ESP32 prints (boot banner, Wi-Fi status, errors) to this console.
+    A boot banner that keeps reappearing means the board is rebooting, often from servo power draw."""
+    global sender_rx
+    if esp32.in_waiting:
+        sender_rx += esp32.read(esp32.in_waiting)
+        *lines, sender_rx = sender_rx.split(b"\n")
+        for line in lines:
+            # Boot noise isn't valid text: show odd bytes as \xNN so any console can print them
+            text = line.decode('ascii', errors='backslashreplace').strip()
+            if text:
+                print(f"[sender] {text}")
 
 
 def send_link_mode(mode, offset):
@@ -77,30 +101,25 @@ def send_link_mode(mode, offset):
         print(f"Link command not sent: {e}")
 
 
-def next_link_mode(offset, now):
-    """Decides LiFi or RF from the target offset (None = target not seen)."""
-    global inside_since
-    if offset is None or offset > BEAM_LOST_PX:
-        inside_since = None
-        return 'R'
-    if offset > BEAM_RELOCK_PX:
-        # Between the two boundaries: keep whichever link is active
-        inside_since = None
-        return link_mode
-    if inside_since is None:
-        inside_since = now
-    return 'L' if now - inside_since >= RELOCK_HOLD_S else link_mode
+def next_link_mode(last_seen, now):
+    """'L' if the target was in view within the last LOST_GRACE_S seconds, otherwise 'R'."""
+    if last_seen is not None and now - last_seen <= LOST_GRACE_S:
+        return 'L'
+    return 'R'
 
 
 while cap.isOpened():
+    print_sender_output()
+
     ret, frame = cap.read()
+    now = time.monotonic()
     if not ret or frame is None:
         # No link command goes out either, so the receiver fails over to RF after 1 s
         print("Failed to capture frame from stream. Retrying...")
         continue
 
     # --- PORTRAIT ROTATION CORRECTION FOR UPRIGHT S24 ULTRA ---
-    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    # frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
 
     height, width, _ = frame.shape
     frame_center_x = width // 2
@@ -115,6 +134,7 @@ while cap.isOpened():
     offset = None
 
     if ids is not None and TARGET_ID in ids.flatten():
+        last_seen = now  # In view anywhere in the frame counts: the link goes LiFi
         cv2.aruco.drawDetectedMarkers(frame, corners, ids)
 
         idx = list(ids.flatten()).index(TARGET_ID)
@@ -146,15 +166,15 @@ while cap.isOpened():
         # Transmit updated coordinates to ESP32
         send_servo_angles(pan_angle, tilt_angle)
 
-        cv2.putText(frame, f"LOCKED & CENTERED: ID {TARGET_ID}", (target_x + 10, target_y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        centered = abs(error_x) <= DEADBAND and abs(error_y) <= DEADBAND
+        cv2.putText(frame, f"TARGET ID {TARGET_ID}{' - CENTERED' if centered else ''}",
+                    (target_x + 10, target_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
     else:
         cv2.putText(frame, "TARGET LOST - SEARCHING", (20, 70),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
     # --- 6. LIFI / RF LINK DECISION -> RECEIVER ESP32 ---
-    now = time.monotonic()
-    mode = next_link_mode(offset, now)
+    mode = next_link_mode(last_seen, now)
     if mode != link_mode or now - last_link_send >= HEARTBEAT_S:
         if mode != link_mode:
             print(f"Link -> {'LiFi (laser)' if mode == 'L' else 'RF (ESP-NOW)'} (offset {offset} px)")
@@ -162,9 +182,8 @@ while cap.isOpened():
         send_link_mode(link_mode, -1 if offset is None else offset)
         last_link_send = now
 
-    # Alignment boundary ring: green while on LiFi, red while on RF
+    # Link status: green while on LiFi, red while on RF
     link_color = (0, 255, 0) if link_mode == 'L' else (0, 0, 255)
-    cv2.circle(frame, (frame_center_x, frame_center_y), BEAM_LOST_PX, link_color, 1)
     link_text = "LiFi (laser)" if link_mode == 'L' else "RF (ESP-NOW)"
     offset_text = "--" if offset is None else f"{offset} px"
     cv2.putText(frame, f"Link: {link_text} | Offset: {offset_text}", (20, 50),
@@ -183,6 +202,5 @@ while cap.isOpened():
 send_link_mode('R', -1)
 link_sock.close()
 cap.release()
-if esp32:
-    esp32.close()
+esp32.close()
 cv2.destroyAllWindows()

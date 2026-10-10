@@ -27,11 +27,12 @@ const int DAC_AUDIO_OUT = 25; // Internal DAC1 connected to 100k Potentiometer P
 // No optical sense pin: whether the beam is on the panel now comes from the host (section 3).
 
 // --- 3. HOST LINK COMMANDS (UDP over Wi-Fi) ---
-// tracker_bridge.py tracks the ArUco target with the camera and decides whether the
-// laser is on the panel. It sends one short text datagram to HOST_CMD_PORT:
-//   "L<offset>"  beam aligned     -> LiFi, DAC stays silent
-//   "R<offset>"  beam off target  -> RF failover, play ESP-NOW audio on the DAC
+// tracker_bridge.py tracks the ArUco target with the camera and picks the link.
+// It sends one short text datagram to HOST_CMD_PORT:
+//   "L<offset>"  target in view (centred or not)  -> LiFi, DAC stays silent
+//   "R<offset>"  target lost by the camera        -> RF failover, play ESP-NOW audio on the DAC
 // <offset> is the target's distance from the crosshair in pixels, -1 when it is lost.
+// The receiver only acts on the letter; the offset is for anyone watching the packets.
 // The host repeats the command every ~100 ms. If it goes quiet for HOST_TIMEOUT_MS,
 // the beam position is unknown, so the receiver fails over to RF on its own.
 const uint16_t HOST_CMD_PORT = 4210; // must match RECEIVER_PORT in tracker_bridge.py
@@ -41,8 +42,7 @@ WiFiUDP hostUdp;
 bool udpStarted = false;
 bool hostSeen = false;
 unsigned long lastHostCmdMs = 0;
-int hostOffsetPx = -1;
-unsigned long lastDisplayMs = 0;
+int shownDots = 0; // How many animated dots the OLED is showing now (0-3)
 
 // --- 4. ESP-NOW DATA STRUCTURE ---
 // struct_audio_packet is defined in include/audio_packet.h, shared with the sender
@@ -105,61 +105,40 @@ void readHostCommands()
     if (msg[0] != 'L' && msg[0] != 'R')
       continue;
 
-    hostOffsetPx = atoi(msg + 1);
     lastHostCmdMs = millis();
     hostSeen = true;
     setLinkMode(msg[0] == 'L', "host command");
   }
 }
 
-void drawHud(bool hostOnline)
+// Prints text centred across the screen. The built-in font is 6 x 8 pixels per
+// character at size 1 (5 for the letter + 1 gap), and scales with the text size.
+void printCentered(const char *text, int y, uint8_t size)
+{
+  int width = strlen(text) * 6 * size;
+  display.setTextSize(size);
+  display.setCursor((SCREEN_WIDTH - width) / 2, y);
+  display.print(text);
+}
+
+// Branded screen. Link details aren't shown here: they go to the serial monitor
+// (115200 baud), which also prints the IP address tracker_bridge.py needs.
+void drawSplash(int dots)
 {
   display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+  display.setTextWrap(false);
 
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.println("AEROBEAM RECEIVER");
-  display.drawFastHLine(0, 10, 128, SH110X_WHITE);
+  printCentered("AEROBEAM", 4, 2);       // 8 chars x 12 px = 96 px wide, 16 px tall
+  printCentered("TECH RECEIVER", 24, 1); // 13 chars x 6 px = 78 px
+  display.drawFastHLine(8, 35, SCREEN_WIDTH - 16, SH110X_WHITE);
+  printCentered("Seamless connection", 41, 1); // 19 chars = 114 px, the most that fits with a margin
 
-  display.setCursor(0, 14);
-  display.print("Link: ");
-  display.println(isLaserActive ? "LiFi (Laser)" : "RF (ESP-NOW)");
-
-  display.setCursor(0, 26);
-  display.print("Host: ");
-  if (!hostSeen)
-  {
-    display.println("waiting");
-  }
-  else if (!hostOnline)
-  {
-    display.println("TIMEOUT");
-  }
-  else if (hostOffsetPx < 0)
-  {
-    display.println("target lost");
-  }
-  else
-  {
-    display.print("off ");
-    display.print(hostOffsetPx);
-    display.println(" px");
-  }
-
-  // The IP shown here is what RECEIVER_IP in tracker_bridge.py must be set to
-  display.setCursor(0, 38);
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    display.print("IP ");
-    display.println(WiFi.localIP());
-  }
-  else
-  {
-    display.println("WiFi: connecting...");
-  }
-
-  display.setCursor(0, 52);
-  display.println(isLaserActive ? "SECURE OPTICAL LINK" : "RF FAILOVER (AUDIO)");
+  // "...", "..", "." or "" under it; a fixed 3-character slot so the dots don't slide around
+  char dotText[4] = "   ";
+  for (int i = 0; i < dots; i++)
+    dotText[i] = '.';
+  printCentered(dotText, 53, 1);
 
   display.display();
 }
@@ -173,9 +152,10 @@ void setup()
   // Initialize I2C bus on GPIO 21 (SDA) and GPIO 22 (SCL)
   Wire.begin(21, 22);
 
-  // Initialize SH1106 Display
+  // Initialize SH1106 Display, and put the branded screen up straight away
   delay(100); // Stabilization delay for display controller
   display.begin(i2c_Address, true);
+  drawSplash(shownDots);
 
   // Join the LAN so the host can send link commands. ESP-NOW keeps working alongside,
   // but only on the router's channel, so the sender joins the same network too.
@@ -191,16 +171,6 @@ void setup()
 
   // Register ESP-NOW receive callback
   esp_now_register_recv_cb(OnDataRecv);
-
-  // Startup Screen HUD
-  display.clearDisplay();
-  display.setTextColor(SH110X_WHITE);
-  display.setTextSize(1);
-  display.setCursor(0, 10);
-  display.println("AeroBeam Receiver");
-  display.println("SH1106 Display OK");
-  display.display();
-  delay(1000);
 }
 
 void loop()
@@ -227,11 +197,13 @@ void loop()
     setLinkMode(false, "host silent");
   }
 
-  // --- UPDATE OLED HUD DISPLAY (10 Hz) ---
-  if (millis() - lastDisplayMs >= 100)
+  // --- OLED: only the dots move, one step every 0.5 s ---
+  // Sending a frame to the screen takes ~25 ms, so redraw only when the picture changes
+  int dots = (millis() / 500) % 4;
+  if (dots != shownDots)
   {
-    lastDisplayMs = millis();
-    drawHud(hostOnline);
+    shownDots = dots;
+    drawSplash(dots);
   }
 
   delay(5); // poll host commands every ~5 ms
