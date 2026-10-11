@@ -1,0 +1,998 @@
+<title>LiFi Tracking Link</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: lab bench. 3D room on the left, receiver instruments (OLED, tracking camera) on the right,
+   bench controls and the signal chain (schematic order) underneath. */
+:root {
+  --bg: #e9edf1;
+  --panel: #ffffff;
+  --sunk: #f3f5f8;
+  --ink: #15202b;
+  --muted: #5a6876;
+  --line: #d2d9e0;
+  --laser: #d1302a;
+  --wifi: #1b78bb;
+  --none: #7d8892;
+  --good: #1f8a4c;
+  --stage: #dce2e8;
+  --floor: #c9d1d8;
+  --grid: #aeb8c2;
+  --display: "Chakra Petch", "Bahnschrift", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1317; --panel: #151c22; --sunk: #10161b; --ink: #e2e8ed; --muted: #8b98a3; --line: #26313a;
+    --laser: #ff5b4f; --wifi: #4aa6ee; --none: #7a8690; --good: #45c27a;
+    --stage: #0b1014; --floor: #1b232a; --grid: #2c3842; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1317; --panel: #151c22; --sunk: #10161b; --ink: #e2e8ed; --muted: #8b98a3; --line: #26313a;
+  --laser: #ff5b4f; --wifi: #4aa6ee; --none: #7a8690; --good: #45c27a;
+  --stage: #0b1014; --floor: #1b232a; --grid: #2c3842; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--body); padding: 0 16px; }
+.wrap { max-width: 1320px; margin: 0 auto; padding-block: 18px 40px; display: grid; gap: 16px; }
+h1, h2 { font-family: var(--display); margin: 0; text-wrap: balance; }
+h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: 0.01em; }
+h2 { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; justify-content: space-between; }
+header p { margin: 2px 0 0; color: var(--muted); max-width: 62ch; }
+.pill { display: inline-flex; align-items: center; gap: 10px; padding: 8px 16px 8px 12px; border-radius: 999px;
+  border: 1.5px solid currentColor; font-family: var(--display); font-weight: 700; font-size: 1.15rem; letter-spacing: 0.04em; }
+.pill .dot { width: 12px; height: 12px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 22%, transparent); }
+.st-LIFI { color: var(--laser); } .st-WIFI { color: var(--wifi); } .st-NONE { color: var(--none); }
+
+.top { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; }
+@media (max-width: 960px) { .top { grid-template-columns: minmax(0, 1fr); } }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; min-width: 0; align-content: start; }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.card-head small { color: var(--muted); font-size: 0.78rem; }
+
+.stage { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--stage);
+  aspect-ratio: 16 / 10; max-width: 100%; touch-action: none; min-height: 300px; }
+.stage canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+.stage canvas.dragging { cursor: grabbing; }
+.tag { position: absolute; transform: translate(-50%, -100%); pointer-events: none; font: 500 11px/1 var(--mono);
+  padding: 4px 6px; border-radius: 4px; background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--ink);
+  border: 1px solid var(--line); white-space: nowrap; }
+.stage-bar { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: flex-end; pointer-events: none; }
+.hint { font-size: 0.78rem; color: var(--muted); background: color-mix(in srgb, var(--panel) 85%, transparent); padding: 4px 8px; border-radius: 6px; }
+.views { display: flex; gap: 4px; pointer-events: auto; }
+.views button { font-size: 0.78rem; padding: 4px 9px; }
+.views button[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+
+.left { display: grid; gap: 16px; align-content: start; min-width: 0; }
+.side { display: grid; gap: 16px; align-content: start; min-width: 0; }
+.oled-frame { background: #111; border-radius: 6px; padding: 10px; border: 1px solid #000; }
+#oled { width: 100%; image-rendering: pixelated; display: block; aspect-ratio: 2 / 1; }
+#camview { width: 100%; display: block; border-radius: 6px; background: #000; aspect-ratio: 4 / 3; }
+.note { font-size: 0.76rem; color: var(--muted); margin: 0; }
+
+.rows { display: grid; gap: 6px; margin: 0; }
+.rows div { display: flex; justify-content: space-between; gap: 12px; }
+.rows dt { color: var(--muted); } .rows dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.meter { position: relative; height: 10px; border-radius: 5px; background: var(--sunk); border: 1px solid var(--line); overflow: visible; }
+.meter i { position: absolute; inset: 0 auto 0 0; border-radius: 5px; background: var(--laser); width: 0%; }
+.meter b { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink); opacity: 0.55; }
+.chip { font: 600 0.72rem/1 var(--mono); padding: 3px 6px; border-radius: 4px; border: 1px solid currentColor; }
+
+.controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 1100px) { .controls { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .controls { grid-template-columns: minmax(0, 1fr); } }
+label.field { display: grid; gap: 4px; font-size: 0.85rem; }
+label.field span { display: flex; justify-content: space-between; gap: 8px; }
+label.field output { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; accent-color: var(--laser); }
+select, button { font: inherit; font-size: 0.88rem; color: var(--ink); background: var(--sunk); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+button { cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--wifi); outline-offset: 2px; }
+button.primary { background: var(--laser); color: #fff; border-color: var(--laser); font-weight: 600; }
+.btnrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.switch { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; cursor: pointer; }
+.switch input { width: 16px; height: 16px; accent-color: var(--wifi); }
+.msg { font-size: 0.78rem; color: var(--muted); margin: 0; min-height: 1.2em; }
+
+.chain { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 900px) { .chain { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.scope { display: grid; gap: 6px; min-width: 0; }
+.scope canvas { width: 100%; height: 110px; display: block; background: var(--sunk); border: 1px solid var(--line); border-radius: 6px; }
+.scope .ref { font: 600 0.72rem/1.2 var(--mono); color: var(--muted); letter-spacing: 0.04em; }
+.scope .name { font-weight: 600; font-size: 0.88rem; }
+
+.bottom { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 900px) { .bottom { grid-template-columns: minmax(0, 1fr); } }
+#log { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; align-content: start; max-height: 220px; overflow-y: auto; font-family: var(--mono); font-size: 0.8rem; }
+#log li { display: grid; grid-template-columns: 4.6em 10px minmax(0, 1fr); gap: 8px; align-items: center; }
+#log li i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+#log li time { color: var(--muted); text-align: right; }
+.empty { color: var(--muted); font-size: 0.85rem; }
+.stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.85rem; color: var(--muted); }
+.stats b { color: var(--ink); font-family: var(--mono); font-weight: 500; }
+.hw ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; max-width: 70ch; }
+.hw p { margin: 0; max-width: 70ch; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>LiFi Tracking Link</h1>
+      <p>Laser voice link (MAX4466 → PAM8403 → laser, solar panel → PAM8403 → speaker) with a pan-tilt camera that tracks the receiver's ArUco marker and an automatic switch to WiFi when the beam is lost.</p>
+    </div>
+    <div id="pill" class="pill st-WIFI" role="status" aria-live="polite"><span class="dot"></span><span id="pillTxt">WiFi</span></div>
+  </header>
+
+  <div class="top">
+    <div class="left">
+    <div class="stage" id="stage">
+      <canvas id="three" aria-label="3D room: laser transmitter on a pan-tilt head, receiver with ArUco marker, obstacle and WiFi router"></canvas>
+      <div id="tags"></div>
+      <div class="stage-bar">
+        <span class="hint">Drag the receiver or the obstacle across the floor. Drag empty space to orbit, scroll or pinch to zoom.</span>
+        <div class="views" role="group" aria-label="Camera view">
+          <button type="button" id="vOverview" aria-pressed="true">Overview</button>
+          <button type="button" id="vTop" aria-pressed="false">Top</button>
+          <button type="button" id="vLaser" aria-pressed="false">Behind laser</button>
+        </div>
+      </div>
+    </div>
+  <section class="card chain-card">
+    <div class="card-head"><h2>Signal chain</h2><small>Last 21 ms of audio at each stage, in schematic order</small></div>
+    <div class="chain">
+      <div class="scope"><div><div class="ref">U1 OUT</div><div class="name">MAX4466 microphone</div></div><canvas id="sc0"></canvas></div>
+      <div class="scope"><div><div class="ref">U3 → LD1</div><div class="name">Laser brightness</div></div><canvas id="sc1"></canvas></div>
+      <div class="scope"><div><div class="ref">D1 → U5 IN</div><div class="name">Solar panel output</div></div><canvas id="sc2"></canvas></div>
+      <div class="scope"><div><div class="ref">U5 → SP1</div><div class="name" id="spkName">Speaker</div></div><canvas id="sc3"></canvas></div>
+    </div>
+  </section>
+    </div>
+
+    <aside class="side">
+      <section class="card">
+        <div class="card-head"><h2>Receiver OLED</h2><small>SSD1306 128×64</small></div>
+        <div class="oled-frame"><canvas id="oled" width="128" height="64" aria-label="OLED display showing the active link"></canvas></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Tracking camera</h2><small id="camState" class="mono">—</small></div>
+        <canvas id="camview" width="640" height="480" aria-label="View from the camera on the laser head"></canvas>
+        <p class="note">Marker detection here is modelled from geometry (size, angle, occlusion). The Python version runs OpenCV's real ArUco detector.</p>
+      </section>
+      <section class="card">
+        <h2>Link readout</h2>
+        <div>
+          <dl class="rows">
+            <div><dt>Beam on solar panel</dt><dd id="rBeam">0%</dd></div>
+          </dl>
+          <div class="meter" style="margin-top:6px" title="Thresholds: leave LiFi below 35%, return above 60%"><i id="mBeam"></i><b style="left:35%"></b><b style="left:60%"></b></div>
+        </div>
+        <dl class="rows">
+          <div><dt>Tracking</dt><dd id="rTrk">—</dd></div>
+          <div><dt>Pan / tilt servos</dt><dd id="rServo">—</dd></div>
+          <div><dt>Distance to receiver</dt><dd id="rDist">—</dd></div>
+          <div><dt>Playout buffer</dt><dd id="rPlay">aligned 80 ms</dd></div>
+        </dl>
+      </section>
+    </aside>
+  </div>
+
+  <section class="controls">
+    <div class="card">
+      <h2>Voice source</h2>
+      <div class="btnrow">
+        <button type="button" class="primary" id="btnAudio">Start audio</button>
+        <select id="src" aria-label="Voice source">
+          <option value="voice">Test voice</option>
+          <option value="tone">600 Hz tone</option>
+          <option value="file">Voice recording…</option>
+          <option value="mic">Microphone</option>
+        </select>
+      </div>
+      <input type="file" id="file" accept="audio/*" hidden>
+      <label class="field" for="vol"><span>Speaker volume <output id="oVol">60%</output></span><input type="range" id="vol" min="0" max="1" step="0.01" value="0.6"></label>
+      <p class="msg" id="audioMsg">Audio is off. The link still runs without it.</p>
+    </div>
+    <div class="card">
+      <h2>Transmitter</h2>
+      <label class="field" for="micGain"><span>MAX4466 gain <output id="oMic">1.0×</output></span><input type="range" id="micGain" min="0.3" max="4" step="0.1" value="1"></label>
+      <label class="field" for="txGain"><span>PAM8403 level to laser <output id="oTx">40%</output></span><input type="range" id="txGain" min="0.1" max="1" step="0.01" value="0.4"></label>
+      <label class="switch"><input type="checkbox" id="trk" checked> Tracking on (pan-tilt follows marker)</label>
+    </div>
+    <div class="card">
+      <h2>Receiver</h2>
+      <label class="field" for="hgt"><span>Panel height <output id="oH">1.00 m</output></span><input type="range" id="hgt" min="0.4" max="1.7" step="0.01" value="1"></label>
+      <label class="field" for="yaw"><span>Turned away from laser <output id="oYaw">0°</output></span><input type="range" id="yaw" min="-70" max="70" step="1" value="0"></label>
+      <label class="field" for="amb"><span>Room light on panel <output id="oAmb">20%</output></span><input type="range" id="amb" min="0" max="1" step="0.05" value="0.2"></label>
+    </div>
+    <div class="card">
+      <h2>Network</h2>
+      <label class="switch"><input type="checkbox" id="wifi" checked> WiFi router on</label>
+      <label class="switch"><input type="checkbox" id="aligned" checked> Aligned 80 ms playout (seamless switch)</label>
+      <div class="btnrow">
+        <button type="button" id="btnBlock">Put obstacle in beam</button>
+        <button type="button" id="btnReset">Reset scene</button>
+      </div>
+    </div>
+  </section>
+
+
+  <div class="bottom">
+    <section class="card">
+      <div class="card-head"><h2>Link events</h2><div class="stats"><span>Handovers <b id="sHand">0</b></span><span>Time on LiFi <b id="sLifi">0%</b></span></div></div>
+      <ul id="log"><li class="empty">Starting on WiFi until the beam has been stable for 0.8 s.</li></ul>
+    </section>
+    <section class="card hw">
+      <h2>What this models on the real build</h2>
+      <ul>
+        <li><b>Transmitter:</b> your Circuit Digest circuit, with the laser on a pan-tilt head (two MG90S servos) and a camera mounted 12 cm above the laser. A Raspberry Pi finds ArUco marker ID 7 and moves the servos to keep it centred.</li>
+        <li><b>Receiver:</b> the marker is printed 12 cm above the solar panel's centre, matching the camera offset, so centring the marker puts the beam on the panel at any distance.</li>
+        <li><b>Switching:</b> an ESP32 reads the panel's DC voltage. Below 35% of normal for 50 ms it plays the WiFi stream; above 60% for 0.8 s it goes back to LiFi. The OLED shows the active link.</li>
+        <li><b>WiFi path:</b> the transmitter ESP32 also samples the MAX4466 output (12-bit, 16 kHz) and streams it over UDP. Both streams go through the same 80 ms playout buffer, so the switch completes before any lost LiFi audio reaches the speaker.</li>
+      </ul>
+      <p class="note">Simplification: the PAM8403 is a class-D amplifier, so the laser really sees fast PWM pulses. The solar panel is too slow to follow them and averages them back into audio, which this model shows directly as brightness = bias + gain × audio.</p>
+    </section>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+'use strict';
+// ------------------------------------------------------------------ parameters (same as the Python version)
+const PIVOT = [0, 1, 0], CAM_OFFSET = 0.12, MARKER_OFFSET = 0.12;
+const IMG_W = 640, IMG_H = 480, FX = 700, FY = 700, CX = IMG_W / 2, CY = IMG_H / 2;
+const CAM_FPS = 30, PHYS_DT = 0.005;
+const PAN_LIM = [-90, 90], TILT_LIM = [-30, 45], SERVO_SPEED = 300, SERVO_RES = 0.1, KP = 0.6, DEADBAND = 0.05;
+const HOLD_TIME = 1.5, SEARCH_AMP = 70, SEARCH_HZ = 0.35, SEARCH_GROW = 12;
+const PANEL_W = 0.12, PANEL_H = 0.08, MARKER_SIZE = 0.12, MARKER_ID = 7, MIN_MARKER_PX = 11;
+const SPOT_R0 = 0.0015, DIVERGENCE = 0.0005, OBST = [0.5, 1.8, 0.3];
+const Q_LOW = 0.35, Q_HIGH = 0.60, T_DOWN = 0.05, T_UP = 0.80, PLAYOUT_DELAY = 0.08, XFADE = 0.015;
+// ArUco DICT_4X4_50 id 7, 6x6 including black border (1 = white), as generated by OpenCV
+const ARUCO7 = [[0,0,0,0,0,0],[0,1,1,0,0,0],[0,0,1,0,0,0],[0,1,1,1,1,0],[0,0,0,1,0,0],[0,0,0,0,0,0]];
+
+// ------------------------------------------------------------------ vector helpers
+const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const mul = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const len = a => Math.hypot(a[0], a[1], a[2]);
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const rad = d => d * Math.PI / 180, deg = r => r * 180 / Math.PI;
+const gauss = () => { let u = 0; while (!u) u = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random()); };
+
+function txAxes(pan, tilt) {
+  const p = rad(pan), t = rad(tilt);
+  return {
+    f: [-Math.cos(t) * Math.sin(p), Math.sin(t), -Math.cos(t) * Math.cos(p)],
+    u: [Math.sin(t) * Math.sin(p), Math.cos(t), Math.sin(t) * Math.cos(p)],
+    r: [Math.cos(p), 0, -Math.sin(p)]
+  };
+}
+const cameraPos = (pan, tilt) => add(PIVOT, mul(txAxes(pan, tilt).u, CAM_OFFSET));
+function project(P, pan, tilt) {
+  const { f, u, r } = txAxes(pan, tilt), rel = sub(P, cameraPos(pan, tilt));
+  const z = dot(rel, f), zs = Math.max(z, 1e-6);
+  return { x: CX + FX * dot(rel, r) / zs, y: CY - FY * dot(rel, u) / zs, z };
+}
+function rayBox(o, d, lo, hi) {
+  let tmin = -Infinity, tmax = Infinity;
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(d[i]) < 1e-12) { if (o[i] < lo[i] || o[i] > hi[i]) return null; }
+    else {
+      const t1 = (lo[i] - o[i]) / d[i], t2 = (hi[i] - o[i]) / d[i];
+      tmin = Math.max(tmin, Math.min(t1, t2)); tmax = Math.min(tmax, Math.max(t1, t2));
+    }
+  }
+  if (tmax < Math.max(tmin, 0)) return null;
+  return Math.max(tmin, 0);
+}
+function segBlocked(a, b, box) {
+  const d = sub(b, a), L = len(d), t = rayBox(a, mul(d, 1 / L), box[0], box[1]);
+  return t !== null && t < L;
+}
+
+// ------------------------------------------------------------------ scene state
+const S = {};
+function resetScene() {
+  S.rec = { x: 0.8, z: -4.5, h: +el('hgt').value, yaw: +el('yaw').value };
+  S.obs = { x: 2.5, z: -2.0 };
+  S.trk = { pan: 0, tilt: 0, panCmd: 0, tiltCmd: 0, enabled: el('trk').checked, lost: 0, mode: 'HOLD', searchT: 0, err: null, lastPan: 0, lastTilt: 0 };
+  S.link = { state: 'WIFI', wifiOk: el('wifi').checked, below: 0, above: 0, lossT: null, events: [], handovers: 0 };
+  S.t = 0; S.nextCam = 0; S.det = null; S.lifiTime = 0;
+  S.beam = beam();
+  el('log').innerHTML = '<li class="empty">Starting on WiFi until the beam has been stable for 0.8 s.</li>';
+}
+function recBasis() {
+  const phi = Math.atan2(PIVOT[0] - S.rec.x, PIVOT[2] - S.rec.z) + rad(S.rec.yaw);
+  return { n: [Math.sin(phi), 0, Math.cos(phi)], right: [Math.cos(phi), 0, -Math.sin(phi)], up: [0, 1, 0], phi };
+}
+const panelCenter = () => [S.rec.x, S.rec.h, S.rec.z];
+const markerCenter = () => [S.rec.x, S.rec.h + MARKER_OFFSET, S.rec.z];
+function square(c, w, h) {
+  const { right, up } = recBasis(), hw = mul(right, w / 2), hh = mul(up, h / 2);
+  return [add(sub(c, hw), hh), add(add(c, hw), hh), sub(add(c, hw), hh), sub(sub(c, hw), hh)];
+}
+function obsBox() {
+  return [[S.obs.x - OBST[0] / 2, 0, S.obs.z - OBST[2] / 2], [S.obs.x + OBST[0] / 2, OBST[1], S.obs.z + OBST[2] / 2]];
+}
+function obsCorners() {
+  const [lo, hi] = obsBox(), out = [];
+  for (const x of [lo[0], hi[0]]) for (const y of [lo[1], hi[1]]) for (const z of [lo[2], hi[2]]) out.push([x, y, z]);
+  return out;
+}
+
+function beam() {
+  const { f } = txAxes(S.trk.pan, S.trk.tilt), o = PIVOT, { n, right, up } = recBasis(), c = panelCenter();
+  let tEnd = 12;
+  if (f[1] < -1e-6) tEnd = Math.min(tEnd, -o[1] / f[1]);
+  const res = { quality: 0, status: 'miss', end: null };
+  const denom = dot(f, n);
+  if (denom < -1e-6) {
+    const t = dot(sub(c, o), n) / denom;
+    if (t > 0) {
+      const hit = add(o, mul(f, t)), px = dot(sub(hit, c), right), py = dot(sub(hit, c), up);
+      const r = SPOT_R0 + DIVERGENCE * t;
+      const cover = clamp((PANEL_W / 2 - Math.abs(px)) / (2 * r) + 0.5, 0, 1) * clamp((PANEL_H / 2 - Math.abs(py)) / (2 * r) + 0.5, 0, 1);
+      if (cover > 0) { res.quality = cover * (0.3 + 0.7 * -denom); res.status = 'hit'; tEnd = t; }
+    }
+  }
+  const box = obsBox(), tb = rayBox(o, f, box[0], box[1]);
+  if (tb !== null && tb < tEnd) {
+    if (res.status === 'hit') { res.status = 'blocked'; res.quality = 0; }
+    else res.status = 'obstacle';
+    tEnd = tb;
+  }
+  res.end = add(o, mul(f, tEnd));
+  return res;
+}
+
+// Geometric stand-in for the ArUco detector: marker must face the camera, be big enough, fully in view and unoccluded.
+function detect() {
+  const { pan, tilt } = S.trk, C = cameraPos(pan, tilt), { n } = recBasis(), mc = markerCenter();
+  const corners = square(mc, MARKER_SIZE, MARKER_SIZE).map(p => project(p, pan, tilt));
+  if (corners.some(p => p.z < 0.05)) return null;
+  const toCam = sub(C, mc);
+  if (dot(n, toCam) / len(toCam) < 0.25) return null;
+  if (corners.some(p => p.x < 3 || p.x > IMG_W - 3 || p.y < 3 || p.y > IMG_H - 3)) return null;
+  let side = Infinity;
+  for (let i = 0; i < 4; i++) { const a = corners[i], b = corners[(i + 1) % 4]; side = Math.min(side, Math.hypot(a.x - b.x, a.y - b.y)); }
+  if (side < MIN_MARKER_PX) return null;
+  const box = obsBox();
+  if (square(mc, MARKER_SIZE, MARKER_SIZE).some(p => segBlocked(C, p, box))) return null;
+  const cx = corners.reduce((s, p) => s + p.x, 0) / 4 + gauss() * 0.3;
+  const cy = corners.reduce((s, p) => s + p.y, 0) / 4 + gauss() * 0.3;
+  return { cx, cy, corners, side };
+}
+
+// ------------------------------------------------------------------ pan-tilt tracker (visual servo)
+function trackerFrame(det, dt) {
+  const T = S.trk;
+  if (!T.enabled) { T.mode = 'OFF'; T.err = null; return; }
+  if (det) {
+    const du = det.cx - CX, dv = det.cy - CY;
+    const ePan = -deg(Math.atan(du / FX)), eTilt = -deg(Math.atan(dv / FY));
+    if (Math.abs(ePan) > DEADBAND) T.panCmd = T.pan + KP * ePan;
+    if (Math.abs(eTilt) > DEADBAND) T.tiltCmd = T.tilt + KP * eTilt;
+    T.lost = 0; T.mode = 'LOCK'; T.err = Math.hypot(du, dv); T.lastPan = T.pan; T.lastTilt = T.tilt;
+    return;
+  }
+  T.err = null; T.lost += dt;
+  if (T.lost < HOLD_TIME) { T.mode = 'HOLD'; return; }
+  // sweep around where the marker was last seen, widening each pass
+  if (T.mode !== 'SEARCH') { T.searchT = 0; T.mode = 'SEARCH'; }
+  T.searchT += dt;
+  const amp = Math.min(SEARCH_AMP, 4 + SEARCH_GROW * T.searchT);
+  T.panCmd = T.lastPan + amp * Math.sin(2 * Math.PI * SEARCH_HZ * T.searchT);
+  T.tiltCmd = T.lastTilt;
+}
+function servoStep(dt) {
+  const T = S.trk, lim = SERVO_SPEED * dt;
+  const pc = clamp(Math.round(T.panCmd / SERVO_RES) * SERVO_RES, ...PAN_LIM);
+  const tc = clamp(Math.round(T.tiltCmd / SERVO_RES) * SERVO_RES, ...TILT_LIM);
+  T.pan += clamp(pc - T.pan, -lim, lim);
+  T.tilt += clamp(tc - T.tilt, -lim, lim);
+}
+
+// ------------------------------------------------------------------ receiver link manager
+function linkUpdate(q, t, dt, cause) {
+  const L = S.link, prev = L.state;
+  if (q < Q_LOW && L.lossT === null) L.lossT = t;
+  if (q >= Q_LOW) L.lossT = null;
+  if (L.state === 'LIFI') {
+    L.below = q < Q_LOW ? L.below + dt : 0;
+    if (L.below >= T_DOWN - 1e-9) { L.state = L.wifiOk ? 'WIFI' : 'NONE'; L.above = 0; }
+  } else {
+    L.above = q >= Q_HIGH ? L.above + dt : 0;
+    if (L.above >= T_UP - 1e-9) { L.state = 'LIFI'; L.below = 0; }
+    else if (L.state === 'WIFI' && !L.wifiOk) L.state = 'NONE';
+    else if (L.state === 'NONE' && L.wifiOk) L.state = 'WIFI';
+  }
+  if (L.state !== prev) {
+    let msg;
+    if (prev === 'LIFI') msg = `LiFi lost (${cause}), switched to ${name(L.state)} after ${Math.round((t - (L.lossT ?? t)) * 1000)} ms`;
+    else if (L.state === 'LIFI') msg = `Beam stable for ${T_UP.toFixed(1)} s, back to LiFi`;
+    else msg = `${name(prev)} → ${name(L.state)}`;
+    if (prev === 'LIFI' || L.state === 'LIFI') L.handovers++;
+    logEvent(t, msg, L.state);
+  }
+}
+const name = s => ({ LIFI: 'LiFi', WIFI: 'WiFi', NONE: 'no link' })[s];
+
+function step() {
+  if (S.t >= S.nextCam - 1e-9) {
+    S.det = detect();
+    trackerFrame(S.det, 1 / CAM_FPS);
+    S.nextCam += 1 / CAM_FPS;
+  }
+  servoStep(PHYS_DT);
+  S.beam = beam();
+  const cause = S.beam.status === 'blocked' ? 'beam blocked' : 'beam off the panel';
+  linkUpdate(S.beam.quality, S.t, PHYS_DT, cause);
+  if (S.link.state === 'LIFI') S.lifiTime += PHYS_DT;
+  S.t += PHYS_DT;
+}
+
+// ------------------------------------------------------------------ audio model (sample level)
+const VOWELS = [[730, 1090], [270, 2290], [300, 870], [530, 1840], [660, 1720]];
+const A = { ctx: null, node: null, mic: null, micSrc: null, fileBuf: null, filePos: 0, running: false,
+  src: 'voice', micGain: 1, txGain: 0.4, ambient: 0.2, volume: 0.6, aligned: true,
+  scope: [new Float32Array(4096), new Float32Array(4096), new Float32Array(4096), new Float32Array(4096)], sp: 0 };
+function initChain(fs) {
+  A.fs = fs; A.D = Math.round(PLAYOUT_DELAY * fs);
+  A.wBuf = new Float32Array(A.D); A.lBuf = new Float32Array(A.D); A.di = 0;
+  A.mix = 0; A.gain = 1; A.qPrev = 0; A.vt = 0; A.ph = 0; A.tt = 0;
+}
+function genVoice(out, n) {
+  const fs = A.fs, t0 = A.vt, F = VOWELS[Math.floor(t0 / 0.31) % 5];
+  const f0m = 125 + 20 * Math.sin(2 * Math.PI * 0.5 * t0), K = Math.floor(3800 / f0m);
+  const a = new Float32Array(K + 1); let sum = 0;
+  for (let k = 1; k <= K; k++) {
+    a[k] = Math.exp(-(((k * f0m - F[0]) / 180) ** 2)) + 0.6 * Math.exp(-(((k * f0m - F[1]) / 260) ** 2)) + 0.12 / k;
+    sum += a[k];
+  }
+  for (let i = 0; i < n; i++) {
+    const t = t0 + i / fs;
+    const f0 = 125 + 20 * Math.sin(2 * Math.PI * 0.5 * t) + 8 * Math.sin(2 * Math.PI * 1.7 * t);
+    A.ph += 2 * Math.PI * f0 / fs; if (A.ph > 2 * Math.PI) A.ph -= 2 * Math.PI;
+    let s = 0; for (let k = 1; k <= K; k++) s += a[k] * Math.sin(k * A.ph);
+    const syl = t * 3.2, env = (Math.floor(syl) % 5 === 4) ? 0 : Math.pow(Math.max(0, Math.sin(Math.PI * (syl % 1))), 0.6);
+    out[i] = 0.85 * s / sum * env;
+  }
+  A.vt = t0 + n / fs;
+}
+function genTone(out, n) {
+  for (let i = 0; i < n; i++) { out[i] = 0.5 * Math.sin(2 * Math.PI * 600 * A.tt); A.tt += 1 / A.fs; }
+  if (A.tt > 1000) A.tt -= 1000;
+}
+function genFile(out, n) {
+  const d = A.fileBuf ? A.fileBuf.getChannelData(0) : null;
+  for (let i = 0; i < n; i++) {
+    if (!d) { out[i] = 0; continue; }
+    out[i] = d[A.filePos]; A.filePos = (A.filePos + 1) % d.length;
+  }
+}
+function processAudio(ev) {
+  const inp = ev.inputBuffer.getChannelData(0), out = ev.outputBuffer.getChannelData(0), n = out.length;
+  const x = A.tmp && A.tmp.length === n ? A.tmp : (A.tmp = new Float32Array(n));
+  if (A.src === 'mic' && A.micSrc) for (let i = 0; i < n; i++) x[i] = inp[i] * 3;
+  else if (A.src === 'tone') genTone(x, n);
+  else if (A.src === 'file') genFile(x, n);
+  else genVoice(x, n);
+  const q = S.beam.quality, st = S.link.state, step = 1 / (XFADE * A.fs);
+  const mixT = st === 'LIFI' ? 1 : 0, gT = st === 'NONE' ? 0 : 1;
+  const sigma = 0.003 + 0.01 * A.ambient, tx = A.txGain, sc = A.scope;
+  for (let i = 0; i < n; i++) {
+    const qv = A.qPrev + (q - A.qPrev) * i / n;
+    const xs = clamp(x[i] * A.micGain, -1, 1);                     // MAX4466 output, clips at the rails
+    const laser = clamp(0.5 + tx * xs, 0, 1);                       // PAM8403 drives laser brightness
+    const rx = qv * laser + A.ambient + gauss() * sigma;            // solar panel: beam + room light + noise
+    const lifi = (rx - qv * 0.5 - A.ambient) / tx;                  // coupling removes DC, U5 restores level
+    const wifi = Math.round(xs * 2047) / 2047;                      // ESP32 12-bit ADC, UDP stream
+    const wOut = A.wBuf[A.di]; A.wBuf[A.di] = wifi;
+    let lOut = lifi;
+    if (A.aligned) { lOut = A.lBuf[A.di]; }
+    A.lBuf[A.di] = lifi;
+    A.di = (A.di + 1) % A.D;
+    A.mix = A.mix < mixT ? Math.min(mixT, A.mix + step) : Math.max(mixT, A.mix - step);
+    A.gain = A.gain < gT ? Math.min(gT, A.gain + step) : Math.max(gT, A.gain - step);
+    const y = clamp((A.mix * lOut + (1 - A.mix) * wOut) * A.gain * A.volume, -1, 1);
+    out[i] = y;
+    sc[0][A.sp] = xs; sc[1][A.sp] = laser; sc[2][A.sp] = rx; sc[3][A.sp] = y;
+    A.sp = (A.sp + 1) & 4095;
+  }
+  A.qPrev = q;
+}
+async function startAudio() {
+  if (!A.ctx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) { setMsg('This browser has no Web Audio support.'); return; }
+    A.ctx = new Ctx();
+    initChain(A.ctx.sampleRate);
+    A.node = A.ctx.createScriptProcessor(2048, 1, 1);
+    A.node.onaudioprocess = processAudio;
+    const silent = A.ctx.createGain(); silent.gain.value = 0;
+    const osc = A.ctx.createOscillator(); osc.connect(silent); silent.connect(A.node); osc.start();
+    A.node.connect(A.ctx.destination);
+  }
+  await A.ctx.resume();
+  A.running = true;
+  if (A.src === 'mic') await openMic();
+  el('btnAudio').textContent = 'Stop audio';
+  if (A.src !== 'mic') setMsg(srcMsg());
+}
+async function stopAudio() {
+  if (A.ctx) await A.ctx.suspend();
+  A.running = false;
+  el('btnAudio').textContent = 'Start audio';
+  setMsg('Audio is off. The link still runs without it.');
+}
+async function openMic() {
+  if (A.micSrc) { setMsg('Microphone live. Use headphones so the speaker does not feed back.'); return; }
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('unsupported');
+    A.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
+    A.micSrc = A.ctx.createMediaStreamSource(A.mic);
+    A.micSrc.connect(A.node);
+    setMsg('Microphone live. Use headphones so the speaker does not feed back.');
+  } catch (e) {
+    A.src = 'voice'; el('src').value = 'voice';
+    setMsg('The microphone is not available in this view. Playing the test voice instead. Open the downloaded HTML file in Chrome or Firefox, or run the Python version, to speak live.');
+  }
+}
+const srcMsg = () => ({ voice: 'Playing a synthetic voice through the link.', tone: 'Playing a steady 600 Hz tone. Gaps and clicks are easiest to hear with it.',
+  file: A.fileBuf ? 'Playing your recording on a loop.' : 'Choose a voice recording to play.' })[A.src] || '';
+const setMsg = m => { el('audioMsg').textContent = m; };
+
+// ------------------------------------------------------------------ UI helpers
+function el(id) { return document.getElementById(id); }
+function tok(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function logEvent(t, msg, state) {
+  const ul = el('log'), empty = ul.querySelector('.empty');
+  if (empty) empty.remove();
+  const li = document.createElement('li');
+  li.className = 'st-' + state;
+  const tm = document.createElement('time'); tm.textContent = t.toFixed(2) + ' s';
+  const dotEl = document.createElement('i');
+  const sp = document.createElement('span'); sp.textContent = msg; sp.style.color = 'var(--ink)';
+  li.append(tm, dotEl, sp);
+  ul.prepend(li);
+  while (ul.children.length > 40) ul.lastChild.remove();
+}
+
+// ------------------------------------------------------------------ OLED (SSD1306, yellow band + blue body)
+const oled = el('oled'), octx = oled.getContext('2d');
+const oBuf = document.createElement('canvas'); oBuf.width = 128; oBuf.height = 64;
+const obx = oBuf.getContext('2d', { willReadFrequently: true });
+let oledKey = '';
+function drawOLED() {
+  const st = S.link.state, q = S.beam.quality, mode = S.trk.mode;
+  const sub = st === 'LIFI' ? `laser ${Math.round(q * 100)}%` : S.beam.status === 'blocked' ? 'beam blocked'
+    : st === 'WIFI' ? 'laser lost - WiFi' : 'no laser, no WiFi';
+  const bars = Math.round(q * 4), key = [st, mode, sub, bars].join('|');
+  if (key === oledKey) return false;
+  oledKey = key;
+  obx.fillStyle = '#000'; obx.fillRect(0, 0, 128, 64);
+  obx.fillStyle = '#fff';
+  obx.font = '600 11px "IBM Plex Mono", monospace'; obx.textBaseline = 'alphabetic';
+  obx.fillText('TRK:' + mode, 1, 11);
+  for (let i = 0; i < 4; i++) {
+    const x = 106 + i * 5, h = 3 + i * 3;
+    if (i < bars) obx.fillRect(x, 13 - h, 4, h + 1); else obx.strokeRect(x + 0.5, 13.5 - h, 3, h);
+  }
+  const big = { LIFI: 'LiFi', WIFI: 'WiFi', NONE: 'NO LINK' }[st];
+  obx.font = st === 'NONE' ? '700 20px "Chakra Petch", sans-serif' : '700 30px "Chakra Petch", sans-serif';
+  obx.textAlign = 'center'; obx.fillText(big, 64, st === 'NONE' ? 42 : 46); obx.textAlign = 'left';
+  obx.font = '500 10px "IBM Plex Mono", monospace'; obx.fillText(sub, 2, 61);
+  const img = obx.getImageData(0, 0, 128, 64), d = img.data;
+  for (let y = 0; y < 64; y++) for (let x = 0; x < 128; x++) {
+    const i = (y * 128 + x) * 4, on = d[i] > 110;
+    if (on) { if (y < 16) { d[i] = 255; d[i + 1] = 214; d[i + 2] = 40; } else { d[i] = 120; d[i + 1] = 214; d[i + 2] = 255; } }
+    else { d[i] = 3; d[i + 1] = 6; d[i + 2] = 10; }
+    d[i + 3] = 255;
+  }
+  octx.putImageData(img, 0, 0);
+  return true;
+}
+
+// ------------------------------------------------------------------ tracking camera view
+const cam = el('camview'), cctx = cam.getContext('2d');
+function proj2(p) { return project(p, S.trk.pan, S.trk.tilt); }
+function poly(ctx, pts, fill) { ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); }
+function hull(pts) {
+  const p = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y), cr = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lo = [], up = [];
+  for (const q of p) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (const q of p.reverse()) { while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  return lo.slice(0, -1).concat(up.slice(0, -1));
+}
+function drawCamera() {
+  const c = cctx, { pan, tilt } = S.trk, C = cameraPos(pan, tilt);
+  const vh = CY + FY * Math.tan(rad(tilt));
+  c.fillStyle = '#b4b1ad'; c.fillRect(0, 0, IMG_W, IMG_H);
+  c.fillStyle = '#6f7378'; c.fillRect(0, clamp(vh, 0, IMG_H), IMG_W, IMG_H);
+  const drawRec = () => {
+    const pc = panelCenter(), a = proj2(sub(pc, [0, PANEL_H / 2, 0])), b = proj2([S.rec.x, 0, S.rec.z]);
+    if (a.z > 0.05 && b.z > 0.05) { c.strokeStyle = '#3e4246'; c.lineWidth = Math.max(2, FX * 0.025 / a.z); c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke(); }
+    const pq = square(pc, PANEL_W, PANEL_H).map(proj2);
+    if (pq.every(p => p.z > 0.05)) poly(c, pq, '#1a2c5e');
+    const mc = markerCenter(), { n, right, up } = recBasis(), s = MARKER_SIZE * 8 / 6;
+    const mq = square(mc, s, s).map(proj2);
+    if (!mq.every(p => p.z > 0.05)) return;
+    if (dot(n, sub(C, mc)) <= 0) { poly(c, mq, '#9a9a9a'); return; }
+    poly(c, mq, '#f4f4f2');
+    const cs = MARKER_SIZE / 6, tl = add(sub(mc, mul(right, MARKER_SIZE / 2)), mul(up, MARKER_SIZE / 2));
+    c.strokeStyle = '#111'; c.lineWidth = 0.6;
+    for (let r = 0; r < 6; r++) for (let k = 0; k < 6; k++) {
+      if (ARUCO7[r][k]) continue;
+      const p0 = add(add(tl, mul(right, k * cs)), mul(up, -r * cs));
+      const q = [p0, add(p0, mul(right, cs)), add(add(p0, mul(right, cs)), mul(up, -cs)), add(p0, mul(up, -cs))].map(proj2);
+      poly(c, q, '#111'); c.stroke();
+    }
+  };
+  const drawObs = () => {
+    const pts = obsCorners().map(proj2);
+    if (pts.every(p => p.z > 0.05)) poly(c, hull(pts), '#7a5236');
+    else if (segBlocked(C, markerCenter(), obsBox())) { c.fillStyle = '#7a5236'; c.fillRect(0, 0, IMG_W, IMG_H); }
+  };
+  const dR = proj2(markerCenter()).z, dO = proj2([S.obs.x, 1, S.obs.z]).z;
+  (dR > dO ? [drawRec, drawObs] : [drawObs, drawRec]).forEach(f => f());
+  // laser spot
+  if (S.beam.status !== 'miss') {
+    const e = proj2(S.beam.end);
+    if (e.z > 0.05 && e.x > 0 && e.x < IMG_W && e.y > 0 && e.y < IMG_H) {
+      const g = c.createRadialGradient(e.x, e.y, 0, e.x, e.y, 9);
+      g.addColorStop(0, 'rgba(255,240,230,1)'); g.addColorStop(0.35, 'rgba(255,40,30,0.9)'); g.addColorStop(1, 'rgba(255,0,0,0)');
+      c.fillStyle = g; c.beginPath(); c.arc(e.x, e.y, 9, 0, Math.PI * 2); c.fill();
+    }
+  }
+  // overlays
+  c.strokeStyle = '#ffb000'; c.lineWidth = 1.5; c.beginPath();
+  c.moveTo(CX - 14, CY); c.lineTo(CX + 14, CY); c.moveTo(CX, CY - 14); c.lineTo(CX, CY + 14); c.stroke();
+  const d = S.det;
+  if (d) {
+    c.strokeStyle = '#2bd46a'; c.lineWidth = 3; c.beginPath();
+    d.corners.forEach((p, i) => i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)); c.closePath(); c.stroke();
+    c.strokeStyle = '#ffb000'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(CX, CY); c.lineTo(d.cx, d.cy); c.stroke();
+    c.fillStyle = '#2bd46a'; c.beginPath(); c.arc(d.cx, d.cy, 4, 0, Math.PI * 2); c.fill();
+  }
+  c.fillStyle = 'rgba(0,0,0,0.65)'; c.fillRect(0, 0, IMG_W, 34);
+  c.font = '500 18px "IBM Plex Mono", monospace'; c.fillStyle = d ? '#2bd46a' : '#ff6b5e';
+  c.fillText(d ? `ArUco ID ${MARKER_ID}  ${d.side.toFixed(0)} px  err ${S.trk.err.toFixed(1)} px` : 'marker not detected', 12, 24);
+  el('camState').textContent = S.trk.mode === 'OFF' ? 'tracking off' : S.trk.mode.toLowerCase();
+}
+
+// ------------------------------------------------------------------ scopes
+const scopes = [0, 1, 2, 3].map(i => el('sc' + i));
+const RANGES = [[-1, 1], [0, 1], [0, 1.6], [-1, 1]];
+const TOK = {};
+function drawScopes() {
+  const { ink, muted, line, laser, wifi } = TOK;
+  const outCol = S.link.state === 'LIFI' ? laser : S.link.state === 'WIFI' ? wifi : muted;
+  const cols = [ink, laser, ink, outCol];
+  scopes.forEach((cv, k) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2), w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+    const [lo, hi] = RANGES[k], Y = v => h - 6 - (v - lo) / (hi - lo) * (h - 12);
+    c.strokeStyle = line; c.lineWidth = 1; c.beginPath();
+    for (const g of (k === 1 ? [0, 0.5, 1] : k === 2 ? [0, 0.5, 1, 1.5] : [-1, 0, 1])) { c.moveTo(0, Y(g)); c.lineTo(w, Y(g)); }
+    c.stroke();
+    if (!A.running) {
+      c.fillStyle = muted; c.font = '12px "IBM Plex Sans", sans-serif'; c.textAlign = 'center';
+      c.fillText('Start audio to see the signal', w / 2, h / 2 + 4); c.textAlign = 'left'; return;
+    }
+    const buf = A.scope[k], N = 1024, start = (A.sp - N + 4096) & 4095;
+    c.strokeStyle = cols[k]; c.lineWidth = 1.4; c.beginPath();
+    for (let i = 0; i < N; i++) { const v = buf[(start + i) & 4095], x = i / (N - 1) * w; i ? c.lineTo(x, Y(v)) : c.moveTo(x, Y(v)); }
+    c.stroke();
+  });
+  el('spkName').textContent = 'Speaker (' + ({ LIFI: 'from LiFi', WIFI: 'from WiFi', NONE: 'muted' })[S.link.state] + ')';
+}
+
+// ------------------------------------------------------------------ 3D scene
+const stage = el('stage'), canvas = el('three');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+const scene = new THREE.Scene();
+const camera3 = new THREE.PerspectiveCamera(45, 16 / 10, 0.05, 100);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 0.75));
+const sun = new THREE.DirectionalLight(0xffffff, 0.65);
+sun.position.set(3, 7, 3); sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6, near: 1, far: 20 });
+scene.add(sun); sun.target.position.set(0, 0, -3.5); scene.add(sun.target);
+
+const floorMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.95 });
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(9, 9), floorMat);
+floor.rotation.x = -Math.PI / 2; floor.position.set(0, 0, -3.5); floor.receiveShadow = true; scene.add(floor);
+let grid = null;
+function buildGrid() {
+  if (grid) scene.remove(grid);
+  grid = new THREE.GridHelper(9, 18, new THREE.Color(tok('--grid')), new THREE.Color(tok('--grid')));
+  grid.position.set(0, 0.002, -3.5); scene.add(grid);
+}
+const M = (c, o = {}) => new THREE.MeshStandardMaterial(Object.assign({ color: c, roughness: 0.6, metalness: 0.1 }, o));
+function mesh(geo, mat, parent, pos, shadow = true) {
+  const m = new THREE.Mesh(geo, mat); if (pos) m.position.set(...pos); m.castShadow = shadow; parent.add(m); return m;
+}
+
+// transmitter
+const tx = new THREE.Group(); scene.add(tx);
+mesh(new THREE.CylinderGeometry(0.18, 0.2, 0.03, 24), M(0x2a2f35), tx, [0, 0.015, 0]);
+mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.92, 12), M(0x3a4048, { metalness: 0.5 }), tx, [0, 0.46, 0]);
+mesh(new THREE.BoxGeometry(0.07, 0.05, 0.05), M(0x1e3f8a), tx, [0, 0.935, 0]);          // pan servo
+const panG = new THREE.Group(); panG.position.set(...PIVOT); scene.add(panG);
+mesh(new THREE.BoxGeometry(0.1, 0.012, 0.06), M(0x2b2b2b), panG, [0, -0.03, 0]);
+mesh(new THREE.BoxGeometry(0.03, 0.05, 0.05), M(0x1e3f8a), panG, [0.055, 0, 0]);         // tilt servo
+const tiltG = new THREE.Group(); panG.add(tiltG);
+const barrel = mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.08, 16), M(0xb8bcc2, { metalness: 0.7, roughness: 0.3 }), tiltG, [0, 0, -0.01]);
+barrel.rotation.x = Math.PI / 2;
+const tip = mesh(new THREE.CircleGeometry(0.009, 16), new THREE.MeshBasicMaterial({ color: 0xff3020 }), tiltG, [0, 0, -0.051], false);
+tip.rotation.y = Math.PI;
+mesh(new THREE.BoxGeometry(0.012, 0.12, 0.012), M(0x2b2b2b), tiltG, [0.025, 0.06, 0]);   // camera bracket
+mesh(new THREE.BoxGeometry(0.05, 0.035, 0.025), M(0x22262b), tiltG, [0, CAM_OFFSET, 0]);
+const lens = mesh(new THREE.CylinderGeometry(0.009, 0.009, 0.012, 16), M(0x0a0a0a, { metalness: 0.4 }), tiltG, [0, CAM_OFFSET, -0.017]);
+lens.rotation.x = Math.PI / 2;
+
+// beam
+const beamMat = new THREE.MeshBasicMaterial({ color: 0xff2a1e, transparent: true, opacity: 0.9 });
+const beamMesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 8, 1, true), beamMat); scene.add(beamMesh);
+const glowMat = new THREE.MeshBasicMaterial({ color: 0xff2a1e, transparent: true, opacity: 0.18, depthWrite: false });
+const glowMesh = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 8, 1, true), glowMat); scene.add(glowMesh);
+const spot = new THREE.Mesh(new THREE.SphereGeometry(0.014, 12, 12), new THREE.MeshBasicMaterial({ color: 0xffd0c8 })); scene.add(spot);
+const spotGlow = new THREE.Mesh(new THREE.SphereGeometry(0.04, 12, 12), new THREE.MeshBasicMaterial({ color: 0xff2a1e, transparent: true, opacity: 0.35, depthWrite: false })); scene.add(spotGlow);
+
+// receiver
+function canvasTex(w, h, draw, nearest) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d'));
+  const t = new THREE.CanvasTexture(c); if (nearest) { t.magFilter = THREE.NearestFilter; t.minFilter = THREE.LinearFilter; } return t;
+}
+const markerTex = canvasTex(128, 128, g => {
+  g.fillStyle = '#fff'; g.fillRect(0, 0, 128, 128);
+  for (let r = 0; r < 6; r++) for (let k = 0; k < 6; k++) if (!ARUCO7[r][k]) { g.fillStyle = '#000'; g.fillRect(16 + k * 16, 16 + r * 16, 16, 16); }
+}, true);
+const panelTex = canvasTex(120, 80, g => {
+  g.fillStyle = '#1b2a5c'; g.fillRect(0, 0, 120, 80);
+  g.strokeStyle = '#4c5f96'; g.lineWidth = 1;
+  for (let x = 0; x <= 120; x += 15) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 80); g.stroke(); }
+  for (let y = 0; y <= 80; y += 20) { g.beginPath(); g.moveTo(0, y); g.lineTo(120, y); g.stroke(); }
+  g.strokeStyle = '#c9ccd2'; g.lineWidth = 2; g.beginPath(); g.moveTo(0, 40); g.lineTo(120, 40); g.stroke();
+});
+const oledTex = new THREE.CanvasTexture(oled); oledTex.magFilter = THREE.NearestFilter;
+
+const rx = new THREE.Group(); scene.add(rx);
+mesh(new THREE.CylinderGeometry(0.16, 0.18, 0.03, 24), M(0x2a2f35), rx, [0, 0.015, 0]);
+const pole = mesh(new THREE.CylinderGeometry(0.015, 0.015, 1, 12), M(0x3a4048, { metalness: 0.5 }), rx, [0, 0.5, 0]);
+const head = new THREE.Group(); rx.add(head);
+mesh(new THREE.BoxGeometry(PANEL_W + 0.012, PANEL_H + 0.012, 0.01), M(0x9aa0a8, { metalness: 0.5 }), head, [0, 0, -0.006]);
+mesh(new THREE.PlaneGeometry(PANEL_W, PANEL_H), new THREE.MeshStandardMaterial({ map: panelTex, roughness: 0.35, metalness: 0.2 }), head, [0, 0, 0.0005]);
+mesh(new THREE.BoxGeometry(0.17, 0.17, 0.006), M(0xdedede), head, [0, MARKER_OFFSET, -0.004]);
+mesh(new THREE.PlaneGeometry(0.16, 0.16), new THREE.MeshBasicMaterial({ map: markerTex }), head, [0, MARKER_OFFSET, 0.0005]);
+mesh(new THREE.BoxGeometry(0.012, MARKER_OFFSET - 0.04, 0.008), M(0x3a4048), head, [0, 0.07, -0.01]);
+mesh(new THREE.BoxGeometry(0.085, 0.05, 0.012), M(0x1b4f9c), head, [0, -0.1, -0.003]);        // OLED board
+mesh(new THREE.PlaneGeometry(0.07, 0.035), new THREE.MeshBasicMaterial({ map: oledTex }), head, [0, -0.1, 0.0035]);
+mesh(new THREE.BoxGeometry(0.05, 0.028, 0.03), M(0x1c1c1c), head, [0, -0.15, -0.005]);           // ESP32
+const rxPick = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1.9, 12), new THREE.MeshBasicMaterial({ visible: false }));
+rxPick.position.y = 0.95; rx.add(rxPick); rxPick.userData.pick = 'rec';
+const rxRing = mesh(new THREE.RingGeometry(0.26, 0.3, 40), new THREE.MeshBasicMaterial({ color: 0x4aa6ee, transparent: true, opacity: 0.6, side: THREE.DoubleSide }), rx, [0, 0.004, 0], false);
+rxRing.rotation.x = -Math.PI / 2;
+
+// obstacle
+const obsG = new THREE.Group(); scene.add(obsG);
+const obsMesh = mesh(new THREE.BoxGeometry(...OBST), M(0x8a5a3a, { roughness: 0.85 }), obsG, [0, OBST[1] / 2, 0]);
+obsMesh.userData.pick = 'obs';
+const obsRing = mesh(new THREE.RingGeometry(0.36, 0.4, 40), new THREE.MeshBasicMaterial({ color: 0xc08050, transparent: true, opacity: 0.6, side: THREE.DoubleSide }), obsG, [0, 0.004, 0], false);
+obsRing.rotation.x = -Math.PI / 2;
+
+// WiFi router with pulse rings
+const router = new THREE.Group(); router.position.set(-3.6, 0, 0.2); scene.add(router);
+mesh(new THREE.BoxGeometry(0.3, 0.75, 0.3), M(0x4b535c), router, [0, 0.375, 0]);
+mesh(new THREE.BoxGeometry(0.26, 0.05, 0.18), M(0xf0f0f0), router, [0, 0.775, 0]);
+for (const x of [-0.08, 0.08]) { const a = mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.18, 8), M(0x222222), router, [x, 0.89, -0.06]); a.rotation.z = x > 0 ? -0.25 : 0.25; }
+const routerLed = mesh(new THREE.BoxGeometry(0.02, 0.01, 0.01), new THREE.MeshBasicMaterial({ color: 0x45c27a }), router, [0.09, 0.78, 0.091], false);
+const pulses = [0, 1, 2].map(() => {
+  const m = new THREE.Mesh(new THREE.TorusGeometry(1, 0.008, 6, 64), new THREE.MeshBasicMaterial({ color: 0x4aa6ee, transparent: true, opacity: 0, depthWrite: false }));
+  m.position.set(0, 0.8, 0); router.add(m); return m;
+});
+
+// labels
+const tags = ['Laser + camera', 'Receiver', 'Obstacle', 'WiFi router'].map(t => {
+  const d = document.createElement('div'); d.className = 'tag'; d.textContent = t; el('tags').appendChild(d); return d;
+});
+
+// camera control
+const view = { mode: 'overview', az: 0.75, el: 0.42, r: 8.2, target: new THREE.Vector3(0, 0.8, -3.2) };
+function placeCamera() {
+  if (view.mode === 'laser') {
+    const { f, u } = txAxes(S.trk.pan, S.trk.tilt);
+    const p = add(add(PIVOT, mul(f, -1.1)), mul(u, 0.35)), tg = add(PIVOT, mul(f, 4));
+    camera3.position.set(...p); camera3.up.set(0, 1, 0); camera3.lookAt(...tg); return;
+  }
+  const t = view.target, e = view.el, a = view.az;
+  camera3.position.set(t.x + view.r * Math.cos(e) * Math.sin(a), t.y + view.r * Math.sin(e), t.z + view.r * Math.cos(e) * Math.cos(a));
+  camera3.lookAt(t);
+}
+function markView(m) {
+  view.mode = m;
+  for (const [id, mm] of [['vOverview', 'overview'], ['vTop', 'top'], ['vLaser', 'laser']]) el(id).setAttribute('aria-pressed', String(mm === m));
+}
+function setView(m) {
+  if (m === 'top') { view.az = 0; view.el = 1.45; view.r = 9.5; }
+  if (m === 'overview') { view.az = 0.75; view.el = 0.42; view.r = 8.2; }
+  markView(m);
+}
+el('vOverview').onclick = () => setView('overview');
+el('vTop').onclick = () => setView('top');
+el('vLaser').onclick = () => setView('laser');
+
+// pointer: drag receiver / obstacle on the floor, orbit otherwise
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const pointers = new Map(); let drag = null, pinch0 = 0;
+function setNdc(e) { const r = canvas.getBoundingClientRect(); ndc.set((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, camera3); }
+function floorHit() { const p = new THREE.Vector3(); return ray.ray.intersectPlane(floorPlane, p) ? p : null; }
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); drag = { kind: 'pinch' }; return; }
+  setNdc(e);
+  const hit = ray.intersectObjects([rxPick, obsMesh], false)[0], fh = floorHit();
+  if (hit && fh) {
+    const kind = hit.object.userData.pick, o = kind === 'rec' ? S.rec : S.obs;
+    drag = { kind, dx: o.x - fh.x, dz: o.z - fh.z };
+  } else drag = { kind: 'orbit', x: e.clientX, y: e.clientY };
+  canvas.classList.add('dragging');
+});
+canvas.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (!drag) return;
+  if (drag.kind === 'pinch' && pointers.size === 2) {
+    const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinch0 > 0) view.r = clamp(view.r * pinch0 / d, 2, 15); pinch0 = d; return;
+  }
+  if (drag.kind === 'orbit') {
+    if (view.mode === 'laser') setView('overview');
+    else if (view.mode === 'top') markView('overview');
+    view.az -= (e.clientX - drag.x) * 0.006; view.el = clamp(view.el + (e.clientY - drag.y) * 0.005, 0.06, 1.48);
+    drag.x = e.clientX; drag.y = e.clientY; return;
+  }
+  setNdc(e); const fh = floorHit(); if (!fh) return;
+  if (drag.kind === 'rec') { S.rec.x = clamp(fh.x + drag.dx, -4.3, 4.3); S.rec.z = clamp(fh.z + drag.dz, -7.8, -1.2); }
+  if (drag.kind === 'obs') { S.obs.x = clamp(fh.x + drag.dx, -4.3, 4.3); S.obs.z = clamp(fh.z + drag.dz, -7.8, 0.6); updateBlockBtn(); }
+});
+const endPtr = e => { pointers.delete(e.pointerId); if (pointers.size === 0) { drag = null; canvas.classList.remove('dragging'); } };
+canvas.addEventListener('pointerup', endPtr); canvas.addEventListener('pointercancel', endPtr);
+canvas.addEventListener('wheel', e => { e.preventDefault(); if (view.mode === 'laser') return; view.r = clamp(view.r * Math.exp(e.deltaY * 0.001), 2, 15); }, { passive: false });
+
+function applyTheme() {
+  for (const k of ['ink', 'muted', 'line', 'laser', 'wifi']) TOK[k] = tok('--' + k);
+  scene.background = new THREE.Color(tok('--stage'));
+  floorMat.color = new THREE.Color(tok('--floor'));
+  buildGrid();
+}
+new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false); camera3.aspect = w / h; camera3.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage);
+
+function setCyl(m, a, b, r) {
+  const d = sub(b, a), L = Math.max(len(d), 1e-4), mid = mul(add(a, b), 0.5);
+  m.position.set(...mid); m.scale.set(r, L, r);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...mul(d, 1 / L)));
+}
+function update3D(now) {
+  panG.rotation.y = rad(S.trk.pan); tiltG.rotation.x = rad(S.trk.tilt);
+  const { phi } = recBasis();
+  rx.position.set(S.rec.x, 0, S.rec.z); rx.rotation.y = phi;
+  const ph = S.rec.h - PANEL_H / 2 - 0.12; pole.scale.y = Math.max(ph, 0.05); pole.position.y = Math.max(ph, 0.05) / 2;
+  head.position.y = S.rec.h;
+  obsG.position.set(S.obs.x, 0, S.obs.z);
+  const end = S.beam.end;
+  setCyl(beamMesh, PIVOT, end, 0.0035); setCyl(glowMesh, PIVOT, end, 0.012);
+  spot.position.set(...end); spotGlow.position.set(...end);
+  spot.visible = spotGlow.visible = S.beam.status !== 'miss' || end[1] < 0.01;
+  const wifiOn = S.link.wifiOk, active = S.link.state === 'WIFI';
+  routerLed.material.color.set(wifiOn ? 0x45c27a : 0x555555);
+  pulses.forEach((p, i) => {
+    const ph2 = ((now / 1000) * 0.6 + i / 3) % 1;
+    p.scale.setScalar(0.2 + ph2 * 3);
+    p.rotation.x = Math.PI / 2;
+    p.material.opacity = wifiOn ? (1 - ph2) * (active ? 0.55 : 0.12) : 0;
+  });
+  placeCamera();
+  renderer.render(scene, camera3);
+  // labels
+  const w = stage.clientWidth, h = stage.clientHeight;
+  [[0, 1.32, 0], [S.rec.x, S.rec.h + 0.3, S.rec.z], [S.obs.x, 1.95, S.obs.z], [-3.6, 1.1, 0.2]].forEach((p, i) => {
+    const v = new THREE.Vector3(...p).project(camera3), vis = v.z < 1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05;
+    tags[i].hidden = !vis || (view.mode === 'laser' && i === 0);
+    tags[i].style.left = ((v.x + 1) / 2 * w) + 'px'; tags[i].style.top = ((1 - v.y) / 2 * h) + 'px';
+  });
+}
+
+// ------------------------------------------------------------------ readouts
+let lastPill = '';
+function updateReadouts() {
+  const st = S.link.state, q = S.beam.quality;
+  if (st !== lastPill) {
+    lastPill = st; el('pill').className = 'pill st-' + st; el('pillTxt').textContent = { LIFI: 'LiFi', WIFI: 'WiFi', NONE: 'No link' }[st];
+  }
+  el('rBeam').textContent = `${Math.round(q * 100)}%  ${({ hit: 'on panel', blocked: 'blocked', miss: 'missed', obstacle: 'hits obstacle' })[S.beam.status]}`;
+  const mb = el('mBeam'); mb.style.width = (q * 100) + '%'; mb.style.background = q >= Q_HIGH ? 'var(--laser)' : q >= Q_LOW ? 'color-mix(in srgb, var(--laser) 55%, var(--none))' : 'var(--none)';
+  const T = S.trk;
+  el('rTrk').textContent = T.mode === 'OFF' ? 'off' : T.mode === 'LOCK' ? `locked, ${T.err.toFixed(1)} px` : T.mode === 'HOLD' ? `holding (${T.lost.toFixed(1)} s)` : 'searching';
+  el('rServo').textContent = `${T.pan.toFixed(1)}° / ${T.tilt.toFixed(1)}°`;
+  el('rDist').textContent = len(sub(panelCenter(), PIVOT)).toFixed(2) + ' m';
+  el('rPlay').textContent = A.aligned ? 'aligned 80 ms' : 'naive (live LiFi)';
+  el('sHand').textContent = S.link.handovers;
+  el('sLifi').textContent = S.t > 0 ? Math.round(100 * S.lifiTime / S.t) + '%' : '0%';
+}
+
+// ------------------------------------------------------------------ controls
+const fmt = { vol: v => Math.round(v * 100) + '%', micGain: v => (+v).toFixed(1) + '×', txGain: v => Math.round(v * 100) + '%',
+  hgt: v => (+v).toFixed(2) + ' m', yaw: v => v + '°', amb: v => Math.round(v * 100) + '%' };
+const outs = { vol: 'oVol', micGain: 'oMic', txGain: 'oTx', hgt: 'oH', yaw: 'oYaw', amb: 'oAmb' };
+for (const id in outs) {
+  const inp = el(id), apply = () => {
+    const v = +inp.value; el(outs[id]).textContent = fmt[id](inp.value);
+    if (id === 'vol') A.volume = v; if (id === 'micGain') A.micGain = v; if (id === 'txGain') A.txGain = v;
+    if (id === 'amb') A.ambient = v; if (id === 'hgt' && S.rec) S.rec.h = v; if (id === 'yaw' && S.rec) S.rec.yaw = v;
+  };
+  inp.addEventListener('input', apply); apply();
+}
+el('trk').addEventListener('change', e => { S.trk.enabled = e.target.checked; if (e.target.checked) { S.trk.mode = 'HOLD'; S.trk.lost = 0; } });
+el('wifi').addEventListener('change', e => { S.link.wifiOk = e.target.checked; });
+el('aligned').addEventListener('change', e => { A.aligned = e.target.checked; });
+el('btnAudio').addEventListener('click', () => (A.running ? stopAudio() : startAudio()));
+el('src').addEventListener('change', async e => {
+  A.src = e.target.value;
+  el('file').hidden = A.src !== 'file';
+  if (A.src === 'file' && !A.fileBuf) el('file').click();
+  if (A.src === 'mic' && A.running) await openMic();
+  else setMsg(A.running ? srcMsg() : 'Press Start audio to hear the link.');
+});
+el('file').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    if (!A.ctx) await startAudio();
+    A.fileBuf = await A.ctx.decodeAudioData(await f.arrayBuffer()); A.filePos = 0;
+    setMsg(`Playing ${f.name} on a loop.`);
+  } catch (err) { setMsg('That file could not be decoded. Try an MP3, WAV or M4A recording.'); }
+});
+const obstacleInPath = () => segBlocked(PIVOT, panelCenter(), obsBox());
+function updateBlockBtn() { el('btnBlock').textContent = obstacleInPath() ? 'Clear the beam' : 'Put obstacle in beam'; }
+el('btnBlock').addEventListener('click', () => {
+  if (obstacleInPath()) { S.obs.x = 2.5; S.obs.z = -2.0; }
+  else { const pc = panelCenter(); S.obs.x = pc[0] * 0.5; S.obs.z = pc[2] * 0.5; }
+});
+el('btnReset').addEventListener('click', () => { resetScene(); });
+
+// ------------------------------------------------------------------ main loop
+resetScene();
+applyTheme(); resize(); setView('overview');
+let last = performance.now(), acc = 0, camAcc = 0;
+function frame(now) {
+  acc += Math.min((now - last) / 1000, 0.1); camAcc += (now - last) / 1000; last = now;
+  while (acc >= PHYS_DT) { step(); acc -= PHYS_DT; }
+  update3D(now);
+  if (camAcc >= 1 / 30) { camAcc = 0; drawCamera(); updateReadouts(); updateBlockBtn(); if (drawOLED()) oledTex.needsUpdate = true; }
+  drawScopes();
+  requestAnimationFrame(frame);
+}
+document.fonts && document.fonts.ready.then(() => { oledKey = ''; });
+requestAnimationFrame(frame);
+})();
+</script>
