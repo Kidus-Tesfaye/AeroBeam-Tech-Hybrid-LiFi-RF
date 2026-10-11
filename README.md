@@ -127,12 +127,11 @@ triggers RF failover.
 
 ## Simulation
 
-`simulation/lifi_tracking_link.html` runs the whole link in a web browser. Double-click it
-to open it; there's nothing to install. You can watch the gimbal track the marker, see the
+`simulation/lifi_tracking_link.html`.  You can watch the gimbal track the marker, see the
 audio signal at each stage, and see the link switch to RF when the beam is lost. It's useful
 for demos and for understanding the system before setting up the hardware.
 
-It is a simplified model, not a copy of the code, so some details differ from the real build.
+It is a simplified model, so some details differ from the real build.
 For example, it uses ArUco marker ID 7 (the real script tracks ID 0).
 
 ## Status displays
