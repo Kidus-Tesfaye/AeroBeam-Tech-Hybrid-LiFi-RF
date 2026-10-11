@@ -40,6 +40,7 @@ The receiver has no beam sensor. The laptop decides from the camera image:
 | `firmware/src/receiver/main.cpp` | Panel-end board: UDP link commands, ESP-NOW audio → DAC (GPIO 25), SH1106 OLED (GPIO 21/22) |
 | `firmware/include/audio_packet.h` | Audio packet format shared by both boards |
 | `firmware/include/wifi_credentials.example.h` | Template for your Wi-Fi name and password |
+| `simulation/lifi_tracking_link.html` | Interactive browser simulation of the tracking and LiFi/RF failover (no hardware needed) |
 
 ## What you need
 
@@ -123,6 +124,16 @@ The boundary values depend on the camera, the distance and the panel size:
 
 Keep `BEAM_LOST_PX` above `DEADBAND` (12). Otherwise the tracker's normal resting error
 triggers RF failover.
+
+## Simulation
+
+`simulation/lifi_tracking_link.html` runs the whole link in a web browser. Double-click it
+to open it; there's nothing to install. You can watch the gimbal track the marker, see the
+audio signal at each stage, and see the link switch to RF when the beam is lost. It's useful
+for demos and for understanding the system before setting up the hardware.
+
+It is a simplified model, not a copy of the code, so some details differ from the real build.
+For example, it uses ArUco marker ID 7 (the real script tracks ID 0).
 
 ## Status displays
 
