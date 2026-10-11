@@ -4,6 +4,8 @@ Audio is sent from one ESP32 to another over a laser beam (LiFi). A camera-guide
 pan/tilt gimbal keeps the laser on the receiver's solar panel. When the beam drifts off
 target, the receiver switches to a backup radio link (ESP-NOW), so the audio keeps playing.
 
+**[▶ Try the live simulation](https://mohammedfiromsa06-design.github.io/AeroBeam-Tech-Hybrid-LiFi-RF/simulation/lifi_tracking_link.html)** in your browser, with no hardware needed.
+
 ```
  Laptop (tracker_bridge.py)
    │  camera stream ◄── phone (IP Webcam) watching the ArUco marker on the panel
@@ -127,7 +129,8 @@ triggers RF failover.
 
 ## Simulation
 
-`simulation/lifi_tracking_link.html`.  You can watch the gimbal track the marker, see the
+[Open it online](https://mohammedfiromsa06-design.github.io/AeroBeam-Tech-Hybrid-LiFi-RF/simulation/lifi_tracking_link.html),
+or open `simulation/lifi_tracking_link.html` locally in a browser. You can watch the gimbal track the marker, see the
 audio signal at each stage, and see the link switch to RF when the beam is lost. It's useful
 for demos and for understanding the system before setting up the hardware.
 
