@@ -11,7 +11,7 @@ target, the receiver switches to a backup radio link (ESP-NOW), so the audio kee
    **[▶ Try the live simulation](https://mohammedfiromsa06-design.github.io/AeroBeam-Tech-Hybrid-LiFi-RF/simulation/lifi_tracking_link.html)**
    in your browser, with no hardware needed.
 
-📹**[▶ Watch this real life demo here](https://drive.google.com/file/d/1WU9ODq8sNfBRY5bi-inhxa71GcVHW303/view?usp=sharing)**
+📹 **[Watch this real life demo here](https://drive.google.com/file/d/1WU9ODq8sNfBRY5bi-inhxa71GcVHW303/view?usp=sharing)**
    
 
 ```
